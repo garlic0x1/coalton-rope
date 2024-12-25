@@ -1,12 +1,19 @@
-(defpackage #:coal-rope
+(defpackage #:rope
   (:use #:coalton #:coalton-prelude)
   (:local-nicknames
    (#:string #:coalton-library/string)
+   (#:list #:coalton-library/list)
    (#:math #:coalton-library/math))
+  (:shadow
+   #:append)
   (:export
    #:Rope
-   #:splice))
-(in-package #:coal-rope)
+   #:splice
+   #:cut
+   #:prepend
+   #:append
+   #:insert))
+(in-package #:rope)
 (named-readtables:in-readtable coalton:coalton)
 
 (coalton-toplevel
@@ -25,36 +32,46 @@
   ;; Types ;;
   ;;-------;;
 
-  (define-struct Rope
+  (define-struct Dimensions
     (length UFix)
-    (depth UFix)
-    (node Node))
+    (depth UFix))
 
-  (define-type Node
-    (Branch Rope Rope)
-    (Leaf String))
+  (define-type Rope
+    (Branch Dimensions Rope Rope)
+    (Leaf Dimensions String))
 
   ;;-------;;
   ;; Utils ;;
   ;;-------;;
 
-  (declare collect (Rope -> (List String)))
-  (define (collect rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf str) (make-list str))
-      ((Branch l r) (append (collect l) (collect r)))))
+  (declare rope-dimensions (Rope -> Dimensions))
+  (define (rope-dimensions rope)
+    (match rope
+      ((Leaf dim _) dim)
+      ((Branch dim _ _) dim)))
 
-  (declare weight (Rope -> UFix))
-  (define (weight rope)
-    (let (Rope length _ node) = rope)
-    (match node
-      ((Leaf _) length)
-      ((Branch (Rope length _ _) _) length)))
+  (declare short-leaf? ((Into :a Rope) => Rope -> :a -> Boolean))
+  (define (short-leaf? leaf obj)
+    (match leaf
+      ((Branch _ _ _) False)
+      ((Leaf (Dimensions length _) _) 
+       (>= *short-leaf* (+ length (.length (rope-dimensions (into obj))))))))
 
   (declare make-leaf (String -> Rope))
   (define (make-leaf str)
-    (Rope (into (string:length str)) 0 (Leaf str)))
+    (Leaf (Dimensions (into (string:length str)) 0) str))
+
+  (declare collect (Rope -> (List String)))
+  (define (collect rope)
+    (match rope
+      ((Leaf _ str) (make-list str))
+      ((Branch _ l r) (list:append (collect l) (collect r)))))
+
+  (declare weight (Rope -> UFix))
+  (define (weight rope)
+    (match rope
+      ((Leaf (Dimensions length _) _) length)
+      ((Branch _ l _) (.length (rope-dimensions l)))))
 
   ;;--------;;
   ;; Traits ;;
@@ -67,7 +84,7 @@
           (progn
             (let (Tuple ante post) = (string:split (math:div length 2) str))
             (splice (into ante) (into post)))
-          (Rope (into length) 0 (Leaf str)))))
+          (Leaf (Dimensions length 0) str))))
 
   (define-instance (Into Rope String)
     (define (into rope)
@@ -79,33 +96,29 @@
 
   (declare rotate-l (Rope -> Rope))
   (define (rotate-l rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) rope)
-      ((Branch l (Rope _ _ (Branch rl rr))) (splice* (splice l rl) rr))
-      ((Branch _ _) rope)))
+    (match rope
+      ((Leaf _ _) rope)
+      ((Branch _ l (Branch _ rl rr)) (splice* (splice l rl) rr))
+      ((Branch _ _ _) rope)))
 
   (declare rotate-r (Rope -> Rope))
   (define (rotate-r rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) rope)
-      ((Branch (Rope _ _ (Branch ll lr)) r) (splice* ll (splice lr r)))
-      ((Branch _ _) rope)))
+    (match rope
+      ((Leaf _ _) rope)
+      ((Branch _ (Branch _ ll lr) r) (splice* ll (splice lr r)))
+      ((Branch _ _ _) rope)))
 
   (declare rotate-lr (Rope -> Rope))
   (define (rotate-lr rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) rope)
-      ((Branch l r) (rotate-r (splice* (rotate-l l) r)))))
+    (match rope
+      ((Leaf _ _) rope)
+      ((Branch _ l r) (rotate-r (splice* (rotate-l l) r)))))
 
   (declare rotate-rl (Rope -> Rope))
   (define (rotate-rl rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) rope)
-      ((Branch l r) (rotate-l (splice* l (rotate-r r))))))
+    (match rope
+      ((Leaf _ _) rope)
+      ((Branch _ l r) (rotate-l (splice* l (rotate-r r))))))
 
   ;;-------------;;
   ;; AVL Balance ;;
@@ -113,17 +126,17 @@
 
   (declare balance-factor (Rope -> IFix))
   (define (balance-factor rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) 0)
-      ((Branch (Rope _ dl _) (Rope _ dr _)) (into (- dl dr)))))
+    (match rope
+      ((Leaf _ _) 0)
+      ((Branch _ l r)
+       (- (into (.depth (rope-dimensions l)))
+          (into (.depth (rope-dimensions r)))))))
 
   (declare balance (Rope -> Rope))
   (define (balance rope)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf _) rope)
-      ((Branch l r)
+    (match rope
+      ((Leaf _ _) rope)
+      ((Branch _ l r)
        (let bf = (balance-factor rope))
        (cond ((< 1 bf)
               (balance
@@ -143,11 +156,11 @@
 
   (declare splice* (Rope -> Rope -> Rope))
   (define (splice* l r)
-    (let (Rope length-l depth-l _) = l)
-    (let (Rope length-r depth-r _) = r)
-    (Rope (+ length-l length-r)
-          (1+ (max depth-l depth-r))
-          (Branch l r)))
+    (let (Dimensions length-l depth-l) = (rope-dimensions l))
+    (let (Dimensions length-r depth-r) = (rope-dimensions r))
+    (Branch (Dimensions (+ length-l length-r) (1+ (max depth-l depth-r)))
+            l
+            r))
 
   (declare splice (Rope -> Rope -> Rope))
   (define (splice l r)
@@ -159,12 +172,11 @@
 
   (declare cut (Rope -> Ufix -> (Tuple Rope Rope)))
   (define (cut rope index)
-    (let (Rope _ _ node) = rope)
-    (match node
-      ((Leaf str)
+    (match rope
+      ((Leaf _ str)
        (let (Tuple ante post) = (string:split index str))
        (Tuple (make-leaf ante) (make-leaf post)))
-      ((Branch l r)
+      ((Branch _ l r)
        (let ((w (weight rope)))
          (cond ((== w index)
                 (Tuple l r))
@@ -179,8 +191,32 @@
   ;; Insert ;;
   ;;--------;;
 
+  (declare prepend (Rope -> Rope -> Rope))
+  (define (prepend rope obj)
+    (match (Tuple rope obj)
+      ((Tuple (Leaf _ str-a) (Leaf _ str-b))
+       (if (short-leaf? rope obj)
+           (make-leaf (string:concat str-b str-a))
+           (splice obj rope)))
+      ((Tuple _ (Branch _ _ _))
+       (splice obj rope))
+      ((Tuple (Branch _ l r) _)
+       (splice (prepend l obj) r))))
+
+  (declare append (Rope -> Rope -> Rope))
+  (define (append rope obj)
+    (match (Tuple rope obj)
+      ((Tuple (Leaf _ str-a) (Leaf _ str-b))
+       (if (short-leaf? rope obj)
+           (make-leaf (string:concat str-a str-b))
+           (splice rope obj)))
+      ((Tuple _ (Branch _ _ _))
+       (splice rope obj))
+      ((Tuple (Branch _ l r) _)
+       (splice l (append r obj)))))
+
   (declare insert ((Into :a Rope) => Rope -> UFix -> :a -> Rope))
   (define (insert rope index obj)
     (let (Tuple ante post) = (cut rope index))
-    (splice (splice ante (into obj)) post))
+    (splice (append ante (into obj)) post))
   )
