@@ -3,7 +3,8 @@
   (:local-nicknames
    (#:string #:coalton-library/string)
    (#:list #:coalton-library/list)
-   (#:math #:coalton-library/math))
+   (#:math #:coalton-library/math)
+   (#:iter #:coalton-library/iterator))
   (:shadow
    #:append)
   (:export
@@ -219,4 +220,16 @@
   (define (insert rope index obj)
     (let (Tuple ante post) = (cut rope index))
     (splice (append ante (into obj)) post))
+
+  ;;----------;;
+  ;; Traverse ;;
+  ;;----------;;
+
+  (define-instance (iter:IntoIterator Rope Char)
+    (define (iter:into-iter rope)
+      (match rope
+        ((Leaf _ str)
+         (string:chars str))
+        ((Branch _ l r)
+         (iter:chain! (iter:into-iter l) (iter:into-iter r))))))
   )
